@@ -1,0 +1,18 @@
+[package]
+name = "tokioplayground"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.83"
+hex = "0.4.3"
+serde = {version = "1.0.201", features = ["derive"]}
+serde_json = "1.0.117"
+sha2 = "0.10.8"
+tokio = { version = "1.37.0", features = ["full"] }
+
+[[bin]]
+name = "client"
+
+[[bin]]
+name = "server"
