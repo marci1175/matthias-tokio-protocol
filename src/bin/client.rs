@@ -1,15 +1,30 @@
-use tokioplayground::{Client, ClientMessage, ClientInfromation};
-use std::fs;
+use std::{fs, sync::Arc};
+use tokio::sync::Mutex;
+use tokioplayground::{listen_for_messages, Client, ClientInfromation, ClientMessage};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let mut client = Client::new("[2a02:ab88:3713:8000:ccf0:2e3c:ac60:39a9]:3000".to_string()).await?;
+    let mut client =
+    Client::new("[2a02:ab88:3713:8000:a5c1:fc5a:b1e:a283]:3000".to_string()).await?;
+    
+    //start listening thread
+    // let mut incoming_messages = listen_for_messages(client.clone());
 
     loop {
-        client.send_message(ClientMessage::new(fs::read("C:\\Users\\marci\\Downloads\\Matthias.exe")?.to_vec().iter().map(|byte| {
-            byte.to_string()
-        }).collect() , ClientInfromation::new("uuid".to_string(), "username".to_string(), None))).await?;
+        let mut input = String::new();
+
+        std::io::stdin().read_line(&mut input)?;
+        client
+            .send_message(ClientMessage::new(
+                input,
+                ClientInfromation::new("uuid".to_string(), "username".to_string(), None),
+            ))
+            .await?;
+
+        // if let Some(msgs) = incoming_messages.recv().await {
+        //     dbg!(msgs);
+        // };
     }
-    
+
     Ok(())
 }
