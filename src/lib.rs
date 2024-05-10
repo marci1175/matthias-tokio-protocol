@@ -22,59 +22,99 @@ pub fn hash_string(num: String) -> [u8; 64] {
 }
 
 pub struct Client {
-    pub server: TcpStream,
+    pub server: Arc<Mutex<TcpStream>>,
 }
 
 impl Client {
     pub async fn new(address: String) -> Result<Self> {
         Ok(Self {
-            server: net::TcpStream::connect(address).await?,
+            server: Arc::new(Mutex::new(net::TcpStream::connect(address).await?)),
         })
     }
 
-    pub async fn send_message(&mut self, message: ClientMessage) -> Result<()> {
+    pub async fn send_message(&self, message: ClientMessage) -> Result<()> {
         let message_as_str = serde_json::to_string(&message)?;
 
         //Send message lenght
         let message_lenght = TryInto::<u32>::try_into(message_as_str.as_bytes().len())?;
 
-        self.server.write_all(&message_lenght.to_be_bytes()).await?;
+        let mut server_tcp_stream = self.server.lock().await;
+
+        server_tcp_stream.write_all(&message_lenght.to_be_bytes()).await?;
 
         //Send actual message
-        self.server.write_all(message_as_str.as_bytes()).await?;
+        server_tcp_stream.write_all(message_as_str.as_bytes()).await?;
 
         //Flush stream
-        self.server.flush().await?;
+        server_tcp_stream.flush().await?;
 
         Ok(())
+    }
+
+    pub async fn disconnect(&self) -> Result<()> {
+        //Aquire lock
+        let mut server_tcp_stream = self.server.lock().await;
+
+        //Send disconnect req to server
+        server_tcp_stream.write_all(&u32::MAX.to_be_bytes()).await?;
+
+        server_tcp_stream.shutdown().await?;
+
+        Ok(())
+    }
+
+    pub async fn try_recv_messages(&self) -> Result<Receiver<String>> {
+        let (sender, reciver) = mpsc::channel::<String>(255);
+
+        //Aquire lock
+        let server_tcp_stream_clone = self.server.clone();
+
+        let _: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
+            //aquire lock inside thread
+            let mut server_tcp_stream = server_tcp_stream_clone.lock().await;
+
+            loop {
+                //Peek messages, and if there are 4 bytes we can assume thats the lenght of the server's reply
+                let mut message_len_buffer = [0; 4];
+
+                server_tcp_stream.peek(&mut message_len_buffer).await?;
+
+                //Try to turn it into a u32
+                let incoming_message_lenght = u32::from_be_bytes(message_len_buffer[..4].try_into()?);
+
+                let mut message_buffer: Vec<u8> = vec![0; incoming_message_lenght as usize];
+
+                server_tcp_stream.read_exact(&mut message_buffer).await?;
+
+                //drain message lenght cuz that was peeked already
+                message_buffer.drain(0..4);
+
+                //Send back to reciver
+                sender.send(String::from_utf8(message_buffer)?).await?;
+            }
+
+            Ok(())
+        });
+
+        Ok(reciver)
     }
 }
 
 // pub fn listen_for_messages(client: Arc<Mutex<Client>>) -> Receiver<String>  {
 //     let (sender, reciver) = mpsc::channel::<String>(255);
-
 //         let _: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
-
 //             let mut client = client.lock().await;
-
 //             loop {
 //                 let mut message_len_buffer: Vec<u8> = vec![0; 4];
-
 //                 client.server.read_exact(&mut message_len_buffer).await?;
-
 //                 let incoming_message_len = u32::from_be_bytes(message_len_buffer[..4].try_into()?);
-
 //                 let mut message_buffer: Vec<u8> = vec![0; incoming_message_len as usize];
-
 //                 client.server.read_exact(&mut message_buffer).await?;
-
 //                 //Send back message buffer
 //                 sender.send(String::from_utf8(message_buffer)?).await?;
 //             }
-
 //             Ok(())
 //         });
-
 //         reciver
 // }
 
