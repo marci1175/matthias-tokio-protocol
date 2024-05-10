@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{self, tcp, TcpStream}, sync::Mutex,
+    net::{self, tcp},
+    sync::Mutex,
 };
 use tokioplayground::ClientMessage;
 
@@ -13,12 +14,8 @@ async fn main() -> anyhow::Result<()> {
     //Information which should be stored simulating a server
     let mut messages: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
-    let mut clients: Arc<Mutex<Vec<TcpStream>>> = Arc::new(Mutex::new(Vec::new()));
-
     loop {
-
-        let mut messages_clone = messages.clone();
-        let mut clients_clone = clients.clone();
+        let messages_clone = messages.clone();
 
         let (mut stream, address) = tcp_listener.accept().await?;
 
@@ -37,34 +34,17 @@ async fn main() -> anyhow::Result<()> {
 
             let message = String::from_utf8(message_buffer)?;
 
-            let parsed_message: ClientMessage = serde_json::from_str(&message)?;
-
-            //Flush stream
-            stream.flush().await?;
+            let parsed_message: ClientMessage = serde_json::from_str(&message.trim())?;
 
             //store message
-            messages_clone.lock().await.push(parsed_message.inner_message);
-            // clients_clone.lock().await.push(stream);
+            messages_clone
+                .lock()
+                .await
+                .push(parsed_message.inner_message);
 
-            // for client in clients_clone.lock().await.iter_mut() {
-            //     for message in &*messages_clone.lock().await {
-            //         //Send message lenght
-            //         let message_lenght = TryInto::<u32>::try_into(message.as_bytes().len())?;
-
-            //         client.write_all(&message_lenght.to_be_bytes()).await?;
-
-            //         //Send actual message
-            //         client.write_all(message.as_bytes()).await?;
-
-            //         //Flush stream
-            //         client.flush().await?;
-            //     }
-            // }
+            dbg!(&messages_clone);
 
             Ok(())
         });
-
-        dbg!(&messages);
-
     }
 }

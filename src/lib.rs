@@ -4,7 +4,11 @@ use anyhow::Result;
 use sha2::{Digest, Sha256, Sha512};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{self, TcpStream}, sync::{mpsc::{self, Receiver}, Mutex},
+    net::{self, TcpStream},
+    sync::{
+        mpsc::{self, Receiver},
+        Mutex,
+    },
 };
 
 pub fn hash_string(num: String) -> [u8; 64] {
@@ -46,33 +50,33 @@ impl Client {
     }
 }
 
-pub fn listen_for_messages(client: Arc<Mutex<Client>>) -> Receiver<String>  {
-    let (sender, reciver) = mpsc::channel::<String>(255);
+// pub fn listen_for_messages(client: Arc<Mutex<Client>>) -> Receiver<String>  {
+//     let (sender, reciver) = mpsc::channel::<String>(255);
 
-        let _: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
-            
-            let mut client = client.lock().await;
+//         let _: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
 
-            loop {
-                let mut message_len_buffer: Vec<u8> = vec![0; 4];
+//             let mut client = client.lock().await;
 
-                client.server.read_exact(&mut message_len_buffer).await?;
-    
-                let incoming_message_len = u32::from_be_bytes(message_len_buffer[..4].try_into()?);
+//             loop {
+//                 let mut message_len_buffer: Vec<u8> = vec![0; 4];
 
-                let mut message_buffer: Vec<u8> = vec![0; incoming_message_len as usize];
+//                 client.server.read_exact(&mut message_len_buffer).await?;
 
-                client.server.read_exact(&mut message_buffer).await?;
+//                 let incoming_message_len = u32::from_be_bytes(message_len_buffer[..4].try_into()?);
 
-                //Send back message buffer
-                sender.send(String::from_utf8(message_buffer)?).await?;
-            }
+//                 let mut message_buffer: Vec<u8> = vec![0; incoming_message_len as usize];
 
-            Ok(())
-        });
+//                 client.server.read_exact(&mut message_buffer).await?;
 
-        reciver
-}
+//                 //Send back message buffer
+//                 sender.send(String::from_utf8(message_buffer)?).await?;
+//             }
+
+//             Ok(())
+//         });
+
+//         reciver
+// }
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
 pub struct ClientInfromation {
