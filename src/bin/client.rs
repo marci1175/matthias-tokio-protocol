@@ -7,9 +7,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Connecting to server. . .");
 
     let mut client =
-        Client::new("[2a02:ab88:3713:8000:1d2c:d930:6231:ed1]:3000".to_string()).await?;
-
-    let mut reciver = client.try_recv_messages().await?;
+        Client::new("[2a02:ab88:3713:8000:f078:8e15:c1d2:ce30]:3000".to_string()).await?;
 
     loop {
         let mut input = String::new();
@@ -33,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
             ))
             .await?;
 
-        dbg!(reciver.recv().await);
+        dbg!(client.reciver.try_recv());
     }
 
     Ok(())

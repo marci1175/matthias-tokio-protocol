@@ -59,7 +59,7 @@ async fn main() -> anyhow::Result<()> {
                 stream.peek(&mut peeking_bytes).await?;
 
                 //If we sent u32::MAX that means we want to disconnect
-                if u32::from_be_bytes(peeking_bytes[..4].try_into()?) == u32::MAX {
+                if u32::from_be_bytes(dbg!(peeking_bytes)[..4].try_into()?) == u32::MAX {
                     stream.shutdown().await?;
                     
                     //Remove from client list
@@ -72,12 +72,16 @@ async fn main() -> anyhow::Result<()> {
 
                     break;
                 }
+                else {
+                    //REply to client
+                }
             }
             Ok(())
         });
 
         //Thread end
         println!("Connected clients: ");
+        dbg!(messages.lock().await);
         dbg!(connected_clients.lock().await);
     }
 }
