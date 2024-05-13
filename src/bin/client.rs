@@ -1,5 +1,5 @@
 use std::{fs, sync::Arc};
-use tokio::sync::Mutex;
+use tokio::{spawn, sync::Mutex};
 use tokioplayground::{Client, ClientInfromation, ClientMessage};
 
 #[tokio::main]
@@ -31,7 +31,15 @@ async fn main() -> anyhow::Result<()> {
             ))
             .await?;
 
-        dbg!(client.reciver.recv().await);
+        let mut recv = client.reciver.resubscribe();
+
+        spawn(async move {
+            loop {
+                for fasz in recv.recv().await {
+                    dbg!(fasz);
+                }
+            }
+        });
     }
 
     Ok(())

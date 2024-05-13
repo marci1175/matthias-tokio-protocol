@@ -1,8 +1,12 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{self, tcp::{self, OwnedWriteHalf}, TcpStream},
+    net::{
+        self,
+        tcp::{self, OwnedWriteHalf},
+        TcpStream,
+    },
     sync::Mutex,
 };
 use tokioplayground::ClientMessage;
@@ -23,9 +27,8 @@ async fn main() -> anyhow::Result<()> {
         let connected_clients_clone = connected_clients.clone();
 
         let (stream, address) = tcp_listener.accept().await?;
-        
-        let (mut reader, mut writer) = stream.into_split();
 
+        let (mut reader, mut writer) = stream.into_split();
         //Push into client list
         connected_clients_clone.lock().await.push(writer);
 
@@ -63,11 +66,12 @@ async fn main() -> anyhow::Result<()> {
                 let parsed_message: ClientMessage = serde_json::from_str(&message.trim())?;
 
                 //store message
-                messages_clone
-                    .lock()
-                    .await
-                    .push(parsed_message);
+                {
+                    messages_clone.lock().await.push(parsed_message);
+                }
 
+                //Reply to all clients after incoming msg
+                reply_to_all_clients(connected_clients_clone.clone(), messages_clone.clone()).await?;
             }
             Ok(())
         });
@@ -80,34 +84,40 @@ async fn main() -> anyhow::Result<()> {
         sync_thread.get_or_insert_with(|| {
             tokio::spawn(async move {
                 loop {
-                    let mut connected_clients = connected_clients_clone.lock().await;
+                    //Thread sleep
+                    tokio::time::sleep(Duration::from_secs(3)).await;
 
-                    for client in connected_clients.iter_mut() {
-                        for message in messages_clone.lock().await.iter() {
-                            let message_as_str = serde_json::to_string(&message)?;
-
-                            //Send message lenght
-                            let message_lenght = TryInto::<u32>::try_into(message_as_str.as_bytes().len())?;
-
-                            client
-                                .write_all(&message_lenght.to_be_bytes())
-                                .await?;
-
-                            //Send actual message
-                            client
-                                .write_all(message_as_str.as_bytes())
-                                .await?;
-
-                            client.flush().await?;
-                        }
-                    }
+                    //Clone again because of moved value
+                    reply_to_all_clients(connected_clients_clone.clone(), messages_clone.clone()).await?;
                 }
 
                 Ok(())
             })
         });
-        println!("Connected clients: ");
         dbg!(messages.lock().await);
-        dbg!(connected_clients.lock().await);
     }
+}
+
+pub async fn reply_to_all_clients(connected_clients_clone: Arc<Mutex<Vec<OwnedWriteHalf>>>, messages_clone: Arc<Mutex<Vec<ClientMessage>>>) -> anyhow::Result<()> {
+    //Sleep thread
+    let mut connected_clients = connected_clients_clone.lock().await;
+
+    for client in connected_clients.iter_mut() {
+        for message in messages_clone.lock().await.iter() {
+            let message_as_str = serde_json::to_string(&message)?;
+
+            //Send message lenght
+            let message_lenght =
+                TryInto::<u32>::try_into(message_as_str.as_bytes().len())?;
+
+            client.write_all(&message_lenght.to_be_bytes()).await?;
+
+            //Send actual message
+            client.write_all(message_as_str.as_bytes()).await?;
+
+            client.flush().await?;
+        }
+    }
+
+    Ok(())
 }

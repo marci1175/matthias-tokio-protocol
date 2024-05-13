@@ -10,8 +10,7 @@ use tokio::{
         TcpStream,
     },
     sync::{
-        mpsc::{self, Receiver},
-        Mutex,
+        broadcast, mpsc::{self, Receiver}, Mutex
     },
 };
 
@@ -27,14 +26,14 @@ pub fn hash_string(num: String) -> [u8; 64] {
 
 pub struct Client {
     pub server_writer: OwnedWriteHalf,
-    pub reciver: Receiver<String>,
+    pub reciver: tokio::sync::broadcast::Receiver<ClientMessage>,
 }
 
 impl Client {
     pub async fn new(address: String) -> Result<Self> {
         let (mut read, write) = net::TcpStream::connect(address).await?.into_split();
 
-        let (sender, reciver) = mpsc::channel::<String>(255);
+        let (sender, reciver) = broadcast::channel::<ClientMessage>(255);
 
         let _: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
             //aquire lock inside thread
@@ -64,7 +63,7 @@ impl Client {
                 read.read_exact(&mut message_buffer).await?;
 
                 //Send back to reciver
-                sender.send(String::from_utf8(message_buffer)?).await?;
+                sender.send(serde_json::from_slice::<ClientMessage>(&message_buffer)?)?;
             }
 
             Ok(())
@@ -106,6 +105,10 @@ impl Client {
         self.server_writer.shutdown().await?;
 
         Ok(())
+    }
+
+    pub async fn clone_reciver(&self) -> tokio::sync::broadcast::Receiver<ClientMessage> {
+        self.reciver.resubscribe()
     }
 }
 
