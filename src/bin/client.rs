@@ -7,13 +7,13 @@ async fn main() -> anyhow::Result<()> {
     println!("Connecting to server. . .");
 
     let mut client =
-        Client::new("[2a02:ab88:3713:8000:f078:8e15:c1d2:ce30]:3000".to_string()).await?;
+        Client::new("[2a02:ab88:3713:8000:280a:a824:d7b2:7a52]:3000".to_string()).await?;
 
     loop {
         let mut input = String::new();
 
         println!("Connected, enter message:");
-        
+
         std::io::stdin().read_line(&mut input)?;
 
         let input = input.trim().to_string();
@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
             ))
             .await?;
 
-        dbg!(client.reciver.try_recv());
+        dbg!(client.reciver.recv().await);
     }
 
     Ok(())

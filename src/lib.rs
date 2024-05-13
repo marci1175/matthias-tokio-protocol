@@ -4,7 +4,11 @@ use anyhow::Result;
 use sha2::{Digest, Sha256, Sha512};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{self, tcp::{OwnedReadHalf, OwnedWriteHalf}, TcpStream},
+    net::{
+        self,
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpStream,
+    },
     sync::{
         mpsc::{self, Receiver},
         Mutex,
@@ -35,25 +39,29 @@ impl Client {
         let _: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
             //aquire lock inside thread
             loop {
+                //Wait until message lenght arrives
+                read.readable().await?;
+
                 //Peek messages, and if there are 4 bytes we can assume thats the lenght of the server's reply
                 let mut message_len_buffer = [0; 4];
 
-                let peeked_bytes = read.peek(&mut message_len_buffer).await?;
+                let peeked_bytes = read.read(&mut message_len_buffer).await?;
 
                 //if peeked_bytes is 0 then it means the server hasnt replied, we should break the loop thus exit the thread
-                if dbg!(peeked_bytes) == 0 {
+                if peeked_bytes != 4 {
                     break;
                 }
 
                 //Try to turn it into a u32
-                let incoming_message_lenght = u32::from_be_bytes(message_len_buffer[..4].try_into()?);
+                let incoming_message_lenght =
+                    u32::from_be_bytes(message_len_buffer[..4].try_into()?);
 
                 let mut message_buffer: Vec<u8> = vec![0; incoming_message_lenght as usize];
 
-                read.read_exact(&mut message_buffer).await?;
+                //Check if server has sent the main message
+                read.readable().await?;
 
-                //drain message lenght cuz that was peeked already
-                message_buffer.drain(0..4);
+                read.read_exact(&mut message_buffer).await?;
 
                 //Send back to reciver
                 sender.send(String::from_utf8(message_buffer)?).await?;
@@ -74,31 +82,31 @@ impl Client {
         //Send message lenght
         let message_lenght = TryInto::<u32>::try_into(message_as_str.as_bytes().len())?;
 
-        self.server_writer.write_all(&message_lenght.to_be_bytes()).await?;
+        self.server_writer
+            .write_all(&message_lenght.to_be_bytes())
+            .await?;
 
         //Send actual message
-        self.server_writer.write_all(message_as_str.as_bytes()).await?;
+        self.server_writer
+            .write_all(message_as_str.as_bytes())
+            .await?;
 
         //Flush stream
         self.server_writer.flush().await?;
-
-        println!("MESSAGE SENT");
 
         Ok(())
     }
 
     pub async fn disconnect(&mut self) -> Result<()> {
         //Send disconnect req to server
-        self.server_writer.write_all(&u32::MAX.to_be_bytes()).await?;
+        self.server_writer
+            .write_all(&u32::MIN.to_be_bytes())
+            .await?;
 
         self.server_writer.shutdown().await?;
 
         Ok(())
     }
-
-    // pub async fn try_recv_messages(&mut self) -> Result<Receiver<String>> {
-        
-    // }
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]

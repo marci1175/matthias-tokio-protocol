@@ -2,7 +2,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{self, tcp, TcpStream},
+    net::{self, tcp::{self, OwnedWriteHalf}, TcpStream},
     sync::Mutex,
 };
 use tokioplayground::ClientMessage;
@@ -12,35 +12,51 @@ async fn main() -> anyhow::Result<()> {
     let tcp_listener = net::TcpListener::bind("[::]:3000").await?;
 
     //Information which should be stored simulating a server
-    let messages: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let connected_clients: Arc<Mutex<Vec<SocketAddr>>> = Arc::new(Mutex::new(Vec::new()));
+    let messages: Arc<Mutex<Vec<ClientMessage>>> = Arc::new(Mutex::new(Vec::new()));
+    let connected_clients: Arc<Mutex<Vec<OwnedWriteHalf>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let mut sync_thread: Option<tokio::task::JoinHandle<anyhow::Result<()>>> = None;
 
     loop {
         //move arc mutex
         let messages_clone = messages.clone();
         let connected_clients_clone = connected_clients.clone();
 
-        let (mut stream, address) = tcp_listener.accept().await?;
+        let (stream, address) = tcp_listener.accept().await?;
+        
+        let (mut reader, mut writer) = stream.into_split();
 
         //Push into client list
-        connected_clients_clone.lock().await.push(address);
+        connected_clients_clone.lock().await.push(writer);
 
         let _: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
-            //move address which we are connected to
-            let connected_address = address.clone();
+            //This represents the clients place in the connected_clients list
+            let self_id = connected_clients_clone.lock().await.len() - 1;
 
+            //threads which sends to client
             loop {
-                stream.readable().await?;
+                reader.readable().await?;
 
                 let mut message_len_buffer: Vec<u8> = vec![0; 4];
 
-                stream.read_exact(&mut message_len_buffer).await?;
+                reader.read_exact(&mut message_len_buffer).await?;
 
                 let incoming_message_len = u32::from_be_bytes(message_len_buffer[..4].try_into()?);
 
+                //If we sent u32::MIN that means we want to disconnect
+                if incoming_message_len == u32::MIN {
+                    //Remove form list
+                    connected_clients_clone.lock().await.remove(self_id);
+
+                    break;
+                }
+
                 let mut message_buffer: Vec<u8> = vec![0; incoming_message_len as usize];
 
-                stream.read_exact(&mut message_buffer).await?;
+                //Wait until the client sends the main message
+                reader.readable().await?;
+
+                reader.read_exact(&mut message_buffer).await?;
 
                 let message = String::from_utf8(message_buffer)?;
 
@@ -50,36 +66,46 @@ async fn main() -> anyhow::Result<()> {
                 messages_clone
                     .lock()
                     .await
-                    .push(parsed_message.inner_message);
+                    .push(parsed_message);
 
-                dbg!(&messages_clone);
-
-                let mut peeking_bytes = [0; 4];
-
-                stream.peek(&mut peeking_bytes).await?;
-
-                //If we sent u32::MAX that means we want to disconnect
-                if u32::from_be_bytes(dbg!(peeking_bytes)[..4].try_into()?) == u32::MAX {
-                    stream.shutdown().await?;
-                    
-                    //Remove from client list
-                    let mut connected_clients = connected_clients_clone.lock().await;
-
-                    //search through vector
-                    if let Some(index) = connected_clients.iter().position(|p| *p == connected_address) {
-                        connected_clients.remove(index);
-                    }
-
-                    break;
-                }
-                else {
-                    //REply to client
-                }
             }
             Ok(())
         });
 
-        //Thread end
+        //Clone again because of moved value
+        let connected_clients_clone = connected_clients.clone();
+        let messages_clone = messages.clone();
+
+        //Sync thread
+        sync_thread.get_or_insert_with(|| {
+            tokio::spawn(async move {
+                loop {
+                    let mut connected_clients = connected_clients_clone.lock().await;
+
+                    for client in connected_clients.iter_mut() {
+                        for message in messages_clone.lock().await.iter() {
+                            let message_as_str = serde_json::to_string(&message)?;
+
+                            //Send message lenght
+                            let message_lenght = TryInto::<u32>::try_into(message_as_str.as_bytes().len())?;
+
+                            client
+                                .write_all(&message_lenght.to_be_bytes())
+                                .await?;
+
+                            //Send actual message
+                            client
+                                .write_all(message_as_str.as_bytes())
+                                .await?;
+
+                            client.flush().await?;
+                        }
+                    }
+                }
+
+                Ok(())
+            })
+        });
         println!("Connected clients: ");
         dbg!(messages.lock().await);
         dbg!(connected_clients.lock().await);
