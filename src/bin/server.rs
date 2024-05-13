@@ -17,26 +17,27 @@ async fn main() -> anyhow::Result<()> {
 
     //Information which should be stored simulating a server
     let messages: Arc<Mutex<Vec<ClientMessage>>> = Arc::new(Mutex::new(Vec::new()));
-    let connected_clients: Arc<Mutex<Vec<OwnedWriteHalf>>> = Arc::new(Mutex::new(Vec::new()));
 
-    let mut sync_thread: Option<tokio::task::JoinHandle<anyhow::Result<()>>> = None;
+    /* For future reference, we push back the ```OwnedWriteHalf``` of the client, and in the reader thread we should only be accessing it by ```connected_clients[self_id]``` */
+    let connected_clients: Arc<Mutex<Vec<OwnedWriteHalf>>> = Arc::new(Mutex::new(Vec::new()));
 
     loop {
         //move arc mutex
         let messages_clone = messages.clone();
         let connected_clients_clone = connected_clients.clone();
 
-        let (stream, address) = tcp_listener.accept().await?;
+        let (stream, _address) = tcp_listener.accept().await?;
 
-        let (mut reader, mut writer) = stream.into_split();
+        let (mut reader, writer) = stream.into_split();
+
         //Push into client list
         connected_clients_clone.lock().await.push(writer);
 
+        //Reader thread
         let _: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
             //This represents the clients place in the connected_clients list
             let self_id = connected_clients_clone.lock().await.len() - 1;
 
-            //threads which sends to client
             loop {
                 reader.readable().await?;
 
@@ -76,28 +77,25 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         });
 
-        //Clone again because of moved value
-        let connected_clients_clone = connected_clients.clone();
-        let messages_clone = messages.clone();
-
-        //Sync thread
-        sync_thread.get_or_insert_with(|| {
-            tokio::spawn(async move {
-                loop {
-                    //Thread sleep
-                    tokio::time::sleep(Duration::from_secs(3)).await;
-
-                    //Clone again because of moved value
-                    reply_to_all_clients(connected_clients_clone.clone(), messages_clone.clone()).await?;
-                }
-
-                Ok(())
-            })
-        });
-        dbg!(messages.lock().await);
+        //// Clone again because of moved value
+        // let connected_clients_clone = connected_clients.clone();
+        // let messages_clone = messages.clone();
+        //// Sync thread (Not needed)
+        // sync_thread.get_or_insert_with(|| {
+        //     tokio::spawn(async move {
+        //         loop {
+        //             //Thread sleep
+        //             tokio::time::sleep(Duration::from_secs(3)).await;
+        //             //Clone again because of moved value
+        //             reply_to_all_clients(connected_clients_clone.clone(), messages_clone.clone()).await?;
+        //         }
+        //         Ok(())
+        //     })
+        // });
     }
 }
 
+/// This function iterates over all the connected clients and all the messages, and sends writes them all to their designated ```OwnedWriteHalf``` (All of the users see all of the messages)
 pub async fn reply_to_all_clients(connected_clients_clone: Arc<Mutex<Vec<OwnedWriteHalf>>>, messages_clone: Arc<Mutex<Vec<ClientMessage>>>) -> anyhow::Result<()> {
     //Sleep thread
     let mut connected_clients = connected_clients_clone.lock().await;
@@ -121,3 +119,6 @@ pub async fn reply_to_all_clients(connected_clients_clone: Arc<Mutex<Vec<OwnedWr
 
     Ok(())
 }
+
+/// Implement server messages so we dont send out client messages to clients we should only be reciving them (we need to trim data connected to security for obv reasons)
+pub struct ServerMessage {}

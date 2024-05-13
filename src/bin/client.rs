@@ -32,7 +32,8 @@ async fn main() -> anyhow::Result<()> {
             .await?;
 
         let mut recv = client.reciver.resubscribe();
-
+        
+        //Recive messages
         spawn(async move {
             loop {
                 for fasz in recv.recv().await {
