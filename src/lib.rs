@@ -1,39 +1,23 @@
-use std::sync::Arc;
-
 use anyhow::Result;
-use sha2::{Digest, Sha256, Sha512};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{
         self,
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpStream,
+        tcp::OwnedWriteHalf,
     },
-    sync::{
-        broadcast, mpsc::{self, Receiver}, Mutex
-    },
+    sync::broadcast,
 };
-
-pub fn hash_string(num: String) -> [u8; 64] {
-    let mut hasher = Sha512::new();
-
-    hasher.update(num);
-
-    let result = hasher.finalize();
-
-    result.into()
-}
 
 pub struct Client {
     pub server_writer: OwnedWriteHalf,
-    pub reciver: tokio::sync::broadcast::Receiver<ClientMessage>,
+    pub reciver: tokio::sync::broadcast::Receiver<String>,
 }
 
 impl Client {
     pub async fn new(address: String) -> Result<Self> {
         let (mut read, write) = net::TcpStream::connect(address).await?.into_split();
 
-        let (sender, reciver) = broadcast::channel::<ClientMessage>(255);
+        let (sender, reciver) = broadcast::channel::<String>(255);
 
         let _: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
             //aquire lock inside thread
@@ -63,7 +47,7 @@ impl Client {
                 read.read_exact(&mut message_buffer).await?;
 
                 //Send back to reciver
-                sender.send(serde_json::from_slice::<ClientMessage>(&message_buffer)?)?;
+                sender.send(String::from_utf8(message_buffer)?)?;
             }
 
             Ok(())
@@ -75,20 +59,16 @@ impl Client {
         })
     }
 
-    pub async fn send_message(&mut self, message: ClientMessage) -> Result<()> {
-        let message_as_str = serde_json::to_string(&message)?;
-
+    pub async fn send_message(&mut self, message: String) -> Result<()> {
         //Send message lenght
-        let message_lenght = TryInto::<u32>::try_into(message_as_str.as_bytes().len())?;
+        let message_lenght = TryInto::<u32>::try_into(message.as_bytes().len())?;
 
         self.server_writer
             .write_all(&message_lenght.to_be_bytes())
             .await?;
 
         //Send actual message
-        self.server_writer
-            .write_all(message_as_str.as_bytes())
-            .await?;
+        self.server_writer.write_all(message.as_bytes()).await?;
 
         //Flush stream
         self.server_writer.flush().await?;
@@ -107,53 +87,7 @@ impl Client {
         Ok(())
     }
 
-    pub async fn clone_reciver(&self) -> tokio::sync::broadcast::Receiver<ClientMessage> {
+    pub async fn clone_reciver(&self) -> tokio::sync::broadcast::Receiver<String> {
         self.reciver.resubscribe()
-    }
-}
-
-#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
-pub struct ClientInfromation {
-    pub uuid: String,
-    pub username: String,
-
-    ///If the client was attempting a connection this field contains all the data used by the connection
-    pub connection_request: Option<ConnectionRequest>,
-}
-
-impl ClientInfromation {
-    pub fn new(
-        uuid: String,
-        username: String,
-        connection_request: Option<ConnectionRequest>,
-    ) -> Self {
-        Self {
-            uuid,
-            username,
-            connection_request,
-        }
-    }
-}
-
-///This struct contains all the information needed to connect to a server
-#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
-pub struct ConnectionRequest {
-    pub password: String,
-}
-
-///Main client message wrapper
-#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
-pub struct ClientMessage {
-    pub client_information: ClientInfromation,
-
-    pub inner_message: String,
-}
-
-impl ClientMessage {
-    pub fn new(inner_message: String, client_information: ClientInfromation) -> Self {
-        Self {
-            inner_message,
-            client_information,
-        }
     }
 }

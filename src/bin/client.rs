@@ -1,6 +1,5 @@
-use std::{fs, sync::Arc};
-use tokio::{spawn, sync::Mutex};
-use tokioplayground::{Client, ClientInfromation, ClientMessage};
+use tokio::spawn;
+use tokioplayground::Client;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -24,19 +23,14 @@ async fn main() -> anyhow::Result<()> {
             break;
         }
 
-        client
-            .send_message(ClientMessage::new(
-                input,
-                ClientInfromation::new("uuid".to_string(), "username".to_string(), None),
-            ))
-            .await?;
+        client.send_message(String::from("asd")).await?;
 
         let mut recv = client.reciver.resubscribe();
-        
+
         //Recive messages
         spawn(async move {
             loop {
-                for fasz in recv.recv().await {
+                while let Ok(fasz) = recv.recv().await {
                     dbg!(fasz);
                 }
             }
