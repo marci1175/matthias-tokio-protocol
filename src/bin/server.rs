@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -9,6 +9,19 @@ use tokio::{
     sync::Mutex,
 };
 
+pub struct ClientInfo {
+    handle: OwnedWriteHalf,
+    address: SocketAddr,
+}
+
+impl ClientInfo {
+    fn new(handle: OwnedWriteHalf, address: SocketAddr) -> Self {
+        Self {
+            handle, address,
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let tcp_listener = net::TcpListener::bind("[::]:3000").await?;
@@ -17,19 +30,19 @@ async fn main() -> anyhow::Result<()> {
     let messages: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
     /* For future reference, we push back the ```OwnedWriteHalf``` of the client, and in the reader thread we should only be accessing it by ```connected_clients[self_id]``` */
-    let connected_clients: Arc<Mutex<Vec<OwnedWriteHalf>>> = Arc::new(Mutex::new(Vec::new()));
+    let connected_clients: Arc<Mutex<Vec<ClientInfo>>> = Arc::new(Mutex::new(Vec::new()));
 
     loop {
         //move arc mutex
         let messages_clone = messages.clone();
         let connected_clients_clone = connected_clients.clone();
 
-        let (stream, _address) = tcp_listener.accept().await?;
+        let (stream, address) = tcp_listener.accept().await?;
 
         let (mut reader, writer) = stream.into_split();
 
         //Push into client list
-        connected_clients_clone.lock().await.push(writer);
+        connected_clients_clone.lock().await.push(ClientInfo::new(writer, address));
 
         //Reader thread
         let _: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
@@ -78,25 +91,28 @@ async fn main() -> anyhow::Result<()> {
 
 /// This function iterates over all the connected clients and all the messages, and sends writes them all to their designated ```OwnedWriteHalf``` (All of the users see all of the messages)
 pub async fn reply_to_all_clients(
-    connected_clients_clone: Arc<Mutex<Vec<OwnedWriteHalf>>>,
+    connected_clients_clone: Arc<Mutex<Vec<ClientInfo>>>,
     messages_clone: Arc<Mutex<Vec<String>>>,
 ) -> anyhow::Result<()> {
     //Sleep thread
     let mut connected_clients = connected_clients_clone.lock().await;
 
     for client in connected_clients.iter_mut() {
+        
+        let client_handle = &mut client.handle;
+        
         for message in messages_clone.lock().await.iter() {
             let message_as_str = serde_json::to_string(&message)?;
 
             //Send message lenght
             let message_lenght = TryInto::<u32>::try_into(message_as_str.as_bytes().len())?;
 
-            client.write_all(&message_lenght.to_be_bytes()).await?;
+            client_handle.write_all(&message_lenght.to_be_bytes()).await?;
 
             //Send actual message
-            client.write_all(message_as_str.as_bytes()).await?;
+            client_handle.write_all(message_as_str.as_bytes()).await?;
 
-            client.flush().await?;
+            client_handle.flush().await?;
         }
     }
 
